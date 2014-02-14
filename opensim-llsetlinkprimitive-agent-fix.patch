@@ -1,0 +1,578 @@
+diff --git a/OpenSim/Region/ScriptEngine/Shared/Api/Implementation/LSL_Api.cs b/OpenSim/Region/ScriptEngine/Shared/Api/Implementation/LSL_Api.cs
+index 975bf2d..f1fa4f4 100644
+--- a/OpenSim/Region/ScriptEngine/Shared/Api/Implementation/LSL_Api.cs
++++ b/OpenSim/Region/ScriptEngine/Shared/Api/Implementation/LSL_Api.cs
+@@ -325,16 +325,21 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
+         /// </param>
+         public ISceneEntity GetLinkEntity(int linknum)
+         {
++            return GetLinkEntity(m_host, linknum);
++        }
++
++        public ISceneEntity GetLinkEntity(SceneObjectPart part, int linknum)
++        {
+             if (linknum < 0)
+             {
+                 if (linknum == ScriptBaseClass.LINK_THIS)
+-                    return m_host;
++                    return part;
+                 else
+                     return null;
+             }
+ 
+-            int actualPrimCount = m_host.ParentGroup.PrimCount;
+-            List<UUID> sittingAvatarIds = m_host.ParentGroup.GetSittingAvatars();
++            int actualPrimCount = part.ParentGroup.PrimCount;
++            List<UUID> sittingAvatarIds = part.ParentGroup.GetSittingAvatars();
+             int adjustedPrimCount = actualPrimCount + sittingAvatarIds.Count;
+ 
+             // Special case for a single prim.  In this case the linknum is zero.  However, this will not match a single
+@@ -342,7 +347,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
+             if (linknum == 0)
+             {
+                 if (actualPrimCount == 1 && sittingAvatarIds.Count == 0)
+-                    return m_host;
++                    return part;
+ 
+                 return null;
+             }
+@@ -351,7 +356,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
+             else if (linknum == ScriptBaseClass.LINK_ROOT && actualPrimCount == 1)
+             {
+                 if (sittingAvatarIds.Count > 0)
+-                    return m_host.ParentGroup.RootPart;
++                    return part.ParentGroup.RootPart;
+                 else
+                     return null;
+             }
+@@ -359,7 +364,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
+             {
+                 if (linknum <= actualPrimCount)
+                 {
+-                    return m_host.ParentGroup.GetLinkNumPart(linknum);
++                    return part.ParentGroup.GetLinkNumPart(linknum);
+                 }
+                 else
+                 {
+@@ -376,6 +381,57 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
+             }
+         }
+ 
++        public List<ISceneEntity> GetLinkEntities(int linkType)
++        {
++            return GetLinkEntities(m_host, linkType);
++        }
++
++        public List<ISceneEntity> GetLinkEntities(SceneObjectPart part, int linkType)
++        {
++            List<ISceneEntity> ret = new List<ISceneEntity>();
++            ret.Add(part);
++
++            switch (linkType)
++            {
++                case ScriptBaseClass.LINK_SET:
++                    return new List<ISceneEntity>(part.ParentGroup.Parts);
++
++                case ScriptBaseClass.LINK_ROOT:
++                    ret = new List<ISceneEntity>();
++                    ret.Add(part.ParentGroup.RootPart);
++                    return ret;
++
++                case ScriptBaseClass.LINK_ALL_OTHERS:
++                    ret = new List<ISceneEntity>(part.ParentGroup.Parts);
++
++                    if (ret.Contains(part))
++                        ret.Remove(part);
++
++                    return ret;
++
++                case ScriptBaseClass.LINK_ALL_CHILDREN:
++                    ret = new List<ISceneEntity>(part.ParentGroup.Parts);
++
++                    if (ret.Contains(part.ParentGroup.RootPart))
++                        ret.Remove(part.ParentGroup.RootPart);
++                    return ret;
++
++                case ScriptBaseClass.LINK_THIS:
++                    return ret;
++
++                default:
++                    if (linkType < 0)
++                        return new List<ISceneEntity>();
++
++                    ISceneEntity target = GetLinkEntity(part, linkType);
++                    if (target == null)
++                        return new List<ISceneEntity>();
++                    ret = new List<ISceneEntity>();
++                    ret.Add(target);
++                    return ret;
++            }
++        }
++
+         public List<SceneObjectPart> GetLinkParts(int linkType)
+         {
+             return GetLinkParts(m_host, linkType);
+@@ -2224,6 +2280,19 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
+             return GetPartLocalPos(m_host);
+         }
+ 
++        protected LSL_Vector GetAgentLocalPos(ScenePresence part)
++        {
++            m_host.AddScriptLPS(1);
++
++            Vector3 pos;
++
++            pos = part.OffsetPosition;
++
++            //            m_log.DebugFormat("[LSL API]: Returning {0} in GetPartLocalPos()", pos);
++
++            return new LSL_Vector(pos);
++        }
++
+         protected LSL_Vector GetPartLocalPos(SceneObjectPart part)
+         {
+             m_host.AddScriptLPS(1);
+@@ -7353,22 +7422,28 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
+ 
+         protected void setLinkPrimParams(int linknumber, LSL_List rules, string originFunc)
+         {
+-            List<SceneObjectPart> parts = GetLinkParts(linknumber);
++            List<ISceneEntity> parts = GetLinkEntities(linknumber);
+ 
+             LSL_List remaining = null;
+             uint rulesParsed = 0;
+ 
+-            foreach (SceneObjectPart part in parts)
+-                remaining = SetPrimParams(part, rules, originFunc, ref rulesParsed);
++            foreach (ISceneEntity part in parts)
++                if (part is SceneObjectPart)
++                    remaining = SetPrimParams((SceneObjectPart) part, rules, originFunc, ref rulesParsed);
++                else
++                    remaining = SetAgentParams((ScenePresence)part, rules, originFunc, ref rulesParsed);
+ 
+             while (remaining != null && remaining.Length > 2)
+             {
+                 linknumber = remaining.GetLSLIntegerItem(0);
+                 rules = remaining.GetSublist(1, -1);
+-                parts = GetLinkParts(linknumber);
++                parts = GetLinkEntities(linknumber);
+ 
+-                foreach (SceneObjectPart part in parts)
+-                    remaining = SetPrimParams(part, rules, originFunc, ref rulesParsed);
++                foreach (ISceneEntity part in parts)
++                    if (part is SceneObjectPart)
++                        remaining = SetPrimParams((SceneObjectPart)part, rules, originFunc, ref rulesParsed);
++                    else
++                        remaining = SetAgentParams((ScenePresence)part, rules, originFunc, ref rulesParsed);
+             }
+         }
+ 
+@@ -7509,6 +7584,408 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
+             }
+         }
+ 
++        protected LSL_List SetAgentParams(ScenePresence part, LSL_List rules, string originFunc, ref uint rulesParsed)
++        {
++            int idx = 0;
++            int idxStart = 0;
++
++            bool positionChanged = false;
++            LSL_Vector currentPosition = GetAgentLocalPos(part);
++
++            try
++            {
++                while (idx < rules.Length)
++                {
++                    ++rulesParsed;
++                    int code = rules.GetLSLIntegerItem(idx++);
++
++                    int remain = rules.Length - idx;
++                    idxStart = idx;
++
++                    int face;
++                    LSL_Vector v;
++
++                    switch (code)
++                    {
++                        case (int)ScriptBaseClass.PRIM_POSITION:
++                        case (int)ScriptBaseClass.PRIM_POS_LOCAL:
++                            if (remain < 1)
++                                return null;
++
++                            v = rules.GetVector3Item(idx++);
++                            positionChanged = true;
++                            currentPosition = v;
++
++                            break;
++                        case (int)ScriptBaseClass.PRIM_SIZE:
++                            if (remain < 1)
++                                return null;
++
++                            v = rules.GetVector3Item(idx++);
++                            //SetScale(part, v);
++
++                            break;
++                        case (int)ScriptBaseClass.PRIM_ROTATION:
++                        case (int)ScriptBaseClass.PRIM_ROT_LOCAL:
++                            if (remain < 1)
++                                return null;
++
++                            LSL_Rotation q = rules.GetQuaternionItem(idx++);
++                            // try to let this work as in SL...
++                            if (part.ParentID == 0)
++                            {
++                                // AV is never root so we do not have to bother
++                            }
++                            else
++                            {
++                                // we are a child. The rotation values will be set to the one of root modified by rot, as in SL. Don't ask.
++                                positionChanged = true;
++                                part.Rotation = (Quaternion)q;
++                            }
++
++                            break;
++
++                        case (int)ScriptBaseClass.PRIM_TYPE:
++                            if (remain < 3)
++                                return null;
++
++                            code = (int)rules.GetLSLIntegerItem(idx++);
++
++                            remain = rules.Length - idx;
++                            float hollow;
++                            LSL_Vector twist;
++                            LSL_Vector taper_b;
++                            LSL_Vector topshear;
++                            float revolutions;
++                            float radiusoffset;
++                            float skew;
++                            LSL_Vector holesize;
++                            LSL_Vector profilecut;
++
++                            switch (code)
++                            {
++                                case (int)ScriptBaseClass.PRIM_TYPE_BOX:
++                                    if (remain < 6)
++                                        return null;
++
++                                    face = (int)rules.GetLSLIntegerItem(idx++);
++                                    v = rules.GetVector3Item(idx++); // cut
++                                    hollow = (float)rules.GetLSLFloatItem(idx++);
++                                    twist = rules.GetVector3Item(idx++);
++                                    taper_b = rules.GetVector3Item(idx++);
++                                    topshear = rules.GetVector3Item(idx++);
++
++                                    //SetPrimitiveShapeParams(part, face, v, hollow, twist, taper_b, topshear,
++                                    //    (byte)ProfileShape.Square, (byte)Extrusion.Straight);
++                                    break;
++
++                                case (int)ScriptBaseClass.PRIM_TYPE_CYLINDER:
++                                    if (remain < 6)
++                                        return null;
++
++                                    face = (int)rules.GetLSLIntegerItem(idx++); // holeshape
++                                    v = rules.GetVector3Item(idx++); // cut
++                                    hollow = (float)rules.GetLSLFloatItem(idx++);
++                                    twist = rules.GetVector3Item(idx++);
++                                    taper_b = rules.GetVector3Item(idx++);
++                                    topshear = rules.GetVector3Item(idx++);
++                                    //SetPrimitiveShapeParams(part, face, v, hollow, twist, taper_b, topshear,
++                                    //    (byte)ProfileShape.Circle, (byte)Extrusion.Straight);
++                                    break;
++
++                                case (int)ScriptBaseClass.PRIM_TYPE_PRISM:
++                                    if (remain < 6)
++                                        return null;
++
++                                    face = (int)rules.GetLSLIntegerItem(idx++); // holeshape
++                                    v = rules.GetVector3Item(idx++); //cut
++                                    hollow = (float)rules.GetLSLFloatItem(idx++);
++                                    twist = rules.GetVector3Item(idx++);
++                                    taper_b = rules.GetVector3Item(idx++);
++                                    topshear = rules.GetVector3Item(idx++);
++                                    //SetPrimitiveShapeParams(part, face, v, hollow, twist, taper_b, topshear,
++                                    //    (byte)ProfileShape.EquilateralTriangle, (byte)Extrusion.Straight);
++                                    break;
++
++                                case (int)ScriptBaseClass.PRIM_TYPE_SPHERE:
++                                    if (remain < 5)
++                                        return null;
++
++                                    face = (int)rules.GetLSLIntegerItem(idx++); // holeshape
++                                    v = rules.GetVector3Item(idx++); // cut
++                                    hollow = (float)rules.GetLSLFloatItem(idx++);
++                                    twist = rules.GetVector3Item(idx++);
++                                    taper_b = rules.GetVector3Item(idx++); // dimple
++                                    //SetPrimitiveShapeParams(part, face, v, hollow, twist, taper_b,
++                                    //    (byte)ProfileShape.HalfCircle, (byte)Extrusion.Curve1);
++                                    break;
++
++                                case (int)ScriptBaseClass.PRIM_TYPE_TORUS:
++                                    if (remain < 11)
++                                        return null;
++
++                                    face = (int)rules.GetLSLIntegerItem(idx++); // holeshape
++                                    v = rules.GetVector3Item(idx++); //cut
++                                    hollow = (float)rules.GetLSLFloatItem(idx++);
++                                    twist = rules.GetVector3Item(idx++);
++                                    holesize = rules.GetVector3Item(idx++);
++                                    topshear = rules.GetVector3Item(idx++);
++                                    profilecut = rules.GetVector3Item(idx++);
++                                    taper_b = rules.GetVector3Item(idx++); // taper_a
++                                    revolutions = (float)rules.GetLSLFloatItem(idx++);
++                                    radiusoffset = (float)rules.GetLSLFloatItem(idx++);
++                                    skew = (float)rules.GetLSLFloatItem(idx++);
++                                    //SetPrimitiveShapeParams(part, face, v, hollow, twist, holesize, topshear, profilecut, taper_b,
++                                    //    revolutions, radiusoffset, skew, (byte)ProfileShape.Circle, (byte)Extrusion.Curve1);
++                                    break;
++
++                                case (int)ScriptBaseClass.PRIM_TYPE_TUBE:
++                                    if (remain < 11)
++                                        return null;
++
++                                    face = (int)rules.GetLSLIntegerItem(idx++); // holeshape
++                                    v = rules.GetVector3Item(idx++); //cut
++                                    hollow = (float)rules.GetLSLFloatItem(idx++);
++                                    twist = rules.GetVector3Item(idx++);
++                                    holesize = rules.GetVector3Item(idx++);
++                                    topshear = rules.GetVector3Item(idx++);
++                                    profilecut = rules.GetVector3Item(idx++);
++                                    taper_b = rules.GetVector3Item(idx++); // taper_a
++                                    revolutions = (float)rules.GetLSLFloatItem(idx++);
++                                    radiusoffset = (float)rules.GetLSLFloatItem(idx++);
++                                    skew = (float)rules.GetLSLFloatItem(idx++);
++                                    //SetPrimitiveShapeParams(part, face, v, hollow, twist, holesize, topshear, profilecut, taper_b,
++                                    //    revolutions, radiusoffset, skew, (byte)ProfileShape.Square, (byte)Extrusion.Curve1);
++                                    break;
++
++                                case (int)ScriptBaseClass.PRIM_TYPE_RING:
++                                    if (remain < 11)
++                                        return null;
++
++                                    face = (int)rules.GetLSLIntegerItem(idx++); // holeshape
++                                    v = rules.GetVector3Item(idx++); //cut
++                                    hollow = (float)rules.GetLSLFloatItem(idx++);
++                                    twist = rules.GetVector3Item(idx++);
++                                    holesize = rules.GetVector3Item(idx++);
++                                    topshear = rules.GetVector3Item(idx++);
++                                    profilecut = rules.GetVector3Item(idx++);
++                                    taper_b = rules.GetVector3Item(idx++); // taper_a
++                                    revolutions = (float)rules.GetLSLFloatItem(idx++);
++                                    radiusoffset = (float)rules.GetLSLFloatItem(idx++);
++                                    skew = (float)rules.GetLSLFloatItem(idx++);
++                                    //SetPrimitiveShapeParams(part, face, v, hollow, twist, holesize, topshear, profilecut, taper_b,
++                                    //    revolutions, radiusoffset, skew, (byte)ProfileShape.EquilateralTriangle, (byte)Extrusion.Curve1);
++                                    break;
++
++                                case (int)ScriptBaseClass.PRIM_TYPE_SCULPT:
++                                    if (remain < 2)
++                                        return null;
++
++                                    string map = rules.Data[idx++].ToString();
++                                    face = (int)rules.GetLSLIntegerItem(idx++); // type
++                                    //SetPrimitiveShapeParams(part, map, face, (byte)Extrusion.Curve1);
++                                    break;
++                            }
++
++                            break;
++
++                        case (int)ScriptBaseClass.PRIM_TEXTURE:
++                            if (remain < 5)
++                                return null;
++
++                            face = (int)rules.GetLSLIntegerItem(idx++);
++                            string tex = rules.Data[idx++].ToString();
++                            LSL_Vector repeats = rules.GetVector3Item(idx++);
++                            LSL_Vector offsets = rules.GetVector3Item(idx++);
++                            double rotation = (double)rules.GetLSLFloatItem(idx++);
++
++                            break;
++
++                        case (int)ScriptBaseClass.PRIM_COLOR:
++                            if (remain < 3)
++                                return null;
++
++                            face = (int)rules.GetLSLIntegerItem(idx++);
++                            LSL_Vector color = rules.GetVector3Item(idx++);
++                            double alpha = (double)rules.GetLSLFloatItem(idx++);
++
++
++                            break;
++
++                        case (int)ScriptBaseClass.PRIM_FLEXIBLE:
++                            if (remain < 7)
++                                return null;
++
++                            bool flexi = rules.GetLSLIntegerItem(idx++);
++                            int softness = rules.GetLSLIntegerItem(idx++);
++                            float gravity = (float)rules.GetLSLFloatItem(idx++);
++                            float friction = (float)rules.GetLSLFloatItem(idx++);
++                            float wind = (float)rules.GetLSLFloatItem(idx++);
++                            float tension = (float)rules.GetLSLFloatItem(idx++);
++                            LSL_Vector force = rules.GetVector3Item(idx++);
++
++
++                            break;
++
++                        case (int)ScriptBaseClass.PRIM_POINT_LIGHT:
++                            if (remain < 5)
++                                return null;
++                            bool light = rules.GetLSLIntegerItem(idx++);
++                            LSL_Vector lightcolor = rules.GetVector3Item(idx++);
++                            float intensity = (float)rules.GetLSLFloatItem(idx++);
++                            float radius = (float)rules.GetLSLFloatItem(idx++);
++                            float falloff = (float)rules.GetLSLFloatItem(idx++);
++
++
++                            break;
++
++                        case (int)ScriptBaseClass.PRIM_GLOW:
++                            if (remain < 2)
++                                return null;
++                            face = rules.GetLSLIntegerItem(idx++);
++                            float glow = (float)rules.GetLSLFloatItem(idx++);
++
++
++                            break;
++
++                        case (int)ScriptBaseClass.PRIM_BUMP_SHINY:
++                            if (remain < 3)
++                                return null;
++                            face = (int)rules.GetLSLIntegerItem(idx++);
++                            int shiny = (int)rules.GetLSLIntegerItem(idx++);
++                            Bumpiness bump = (Bumpiness)(int)rules.GetLSLIntegerItem(idx++);
++
++
++                            break;
++
++                        case (int)ScriptBaseClass.PRIM_FULLBRIGHT:
++                            if (remain < 2)
++                                return null;
++                            face = rules.GetLSLIntegerItem(idx++);
++                            bool st = rules.GetLSLIntegerItem(idx++);
++                            break;
++
++                        case (int)ScriptBaseClass.PRIM_MATERIAL:
++                            if (remain < 1)
++                                return null;
++                            int mat = rules.GetLSLIntegerItem(idx++);
++                            if (mat < 0 || mat > 7)
++                                return null;
++
++                            break;
++
++                        case (int)ScriptBaseClass.PRIM_PHANTOM:
++                            if (remain < 1)
++                                return null;
++
++                            string ph = rules.Data[idx++].ToString();
++
++                            break;
++
++                        case (int)ScriptBaseClass.PRIM_PHYSICS:
++                            if (remain < 1)
++                                return null;
++                            string phy = rules.Data[idx++].ToString();
++                            bool physics;
++
++                            if (phy.Equals("1"))
++                                physics = true;
++                            else
++                                physics = false;
++
++                            break;
++
++                        case (int)ScriptBaseClass.PRIM_PHYSICS_SHAPE_TYPE:
++                            if (remain < 1)
++                                return null;
++
++                            int shape_type = rules.GetLSLIntegerItem(idx++);
++
++                            break;
++
++                        case (int)ScriptBaseClass.PRIM_TEMP_ON_REZ:
++                            if (remain < 1)
++                                return null;
++                            string temp = rules.Data[idx++].ToString();
++
++                            //part.ParentGroup.ScriptSetTemporaryStatus(temp.Equals("1"));
++
++                            break;
++
++                        case (int)ScriptBaseClass.PRIM_TEXGEN:
++                            if (remain < 2)
++                                return null;
++                            //face,type
++                            face = rules.GetLSLIntegerItem(idx++);
++                            int style = rules.GetLSLIntegerItem(idx++);
++                            //SetTexGen(part, face, style);
++                            break;
++                        case (int)ScriptBaseClass.PRIM_TEXT:
++                            if (remain < 3)
++                                return null;
++                            string primText = rules.GetLSLStringItem(idx++);
++                            LSL_Vector primTextColor = rules.GetVector3Item(idx++);
++                            LSL_Float primTextAlpha = rules.GetLSLFloatItem(idx++);
++                            Vector3 av3 = Util.Clip(primTextColor, 0.0f, 1.0f);
++                            //part.SetText(primText, av3, Util.Clip((float)primTextAlpha, 0.0f, 1.0f));
++
++                            break;
++                        case (int)ScriptBaseClass.PRIM_NAME:
++                            if (remain < 1)
++                                return null;
++                            string primName = rules.GetLSLStringItem(idx++);
++                            //part.Name = primName;
++                            break;
++                        case (int)ScriptBaseClass.PRIM_DESC:
++                            if (remain < 1)
++                                return null;
++                            string primDesc = rules.GetLSLStringItem(idx++);
++                            //part.Description = primDesc;
++                            break;
++                        case (int)ScriptBaseClass.PRIM_OMEGA:
++                            if (remain < 3)
++                                return null;
++                            LSL_Vector axis = rules.GetVector3Item(idx++);
++                            LSL_Float spinrate = rules.GetLSLFloatItem(idx++);
++                            LSL_Float gain = rules.GetLSLFloatItem(idx++);
++                            //TargetOmega(part, axis, (double)spinrate, (double)gain);
++                            break;
++                        case (int)ScriptBaseClass.PRIM_SLICE:
++                            if (remain < 1)
++                                return null;
++                            LSL_Vector slice = rules.GetVector3Item(idx++);
++                            //part.UpdateSlice((float)slice.x, (float)slice.y);
++                            break;
++                        case (int)ScriptBaseClass.PRIM_LINK_TARGET:
++                            if (remain < 3) // setting to 3 on the basis that parsing any usage of PRIM_LINK_TARGET that has nothing following it is pointless.
++                                return null;
++
++                            return rules.GetSublist(idx, -1);
++                    }
++                }
++            }
++            catch (InvalidCastException e)
++            {
++                ShoutError(string.Format(
++                        "{0} error running rule #{1}: arg #{2} ",
++                        originFunc, rulesParsed, idx - idxStart) + e.Message);
++            }
++            finally
++            {
++                if (positionChanged)
++                {
++                    part.OffsetPosition = currentPosition;
++                    /*
++                    SceneObjectGroup parent = part.ParentGroup;
++                    parent.HasGroupChanged = true;
++                    parent.ScheduleGroupForTerseUpdate();
++                     */
++                }
++            }
++            return null;
++
++        }
++
+         protected LSL_List SetPrimParams(SceneObjectPart part, LSL_List rules, string originFunc, ref uint rulesParsed)
+         {
+             int idx = 0;
