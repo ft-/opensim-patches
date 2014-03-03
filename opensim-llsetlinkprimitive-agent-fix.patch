@@ -188,6 +188,7 @@ index 975bf2d..f1fa4f4 100644
 +
 +                    int remain = rules.Length - idx;
 +                    idxStart = idx;
++                    LSL_Types.Quaternion parent_rot = Quaternion.Identity;
 +
 +                    int face;
 +                    LSL_Vector v;
@@ -213,22 +214,19 @@ index 975bf2d..f1fa4f4 100644
 +
 +                            break;
 +                        case (int)ScriptBaseClass.PRIM_ROTATION:
++                            if (part.ParentPart != null)
++                            {
++                                parent_rot = part.ParentPart.GetWorldRotation();
++                            }
++                            goto  case (int)ScriptBaseClass.PRIM_ROT_LOCAL;
++
 +                        case (int)ScriptBaseClass.PRIM_ROT_LOCAL:
 +                            if (remain < 1)
 +                                return null;
 +
-+                            LSL_Rotation q = rules.GetQuaternionItem(idx++);
-+                            // try to let this work as in SL...
-+                            if (part.ParentID == 0)
-+                            {
-+                                // AV is never root so we do not have to bother
-+                            }
-+                            else
-+                            {
-+                                // we are a child. The rotation values will be set to the one of root modified by rot, as in SL. Don't ask.
-+                                positionChanged = true;
-+                                part.Rotation = (Quaternion)q;
-+                            }
++                            // we are a child. The rotation values will be set to the one of root modified by rot, as in SL. Don't ask.
++                            positionChanged = true;
++                            part.Rotation = parent_rot * rules.GetQuaternionItem(idx++);
 +
 +                            break;
 +
@@ -562,11 +560,7 @@ index 975bf2d..f1fa4f4 100644
 +                if (positionChanged)
 +                {
 +                    part.OffsetPosition = currentPosition;
-+                    /*
-+                    SceneObjectGroup parent = part.ParentGroup;
-+                    parent.HasGroupChanged = true;
-+                    parent.ScheduleGroupForTerseUpdate();
-+                     */
++                    part.SendTerseUpdateToAllClients();
 +                }
 +            }
 +            return null;
